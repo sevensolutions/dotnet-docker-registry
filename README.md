@@ -1,4 +1,4 @@
-# .NET Docker Registry
+# 🐳 .NET Docker Registry
 
 A very simple reference implementation of the Docker V2 HTTP API using .NET and Minimal APIs.
 It supports `docker push` and `docker pull` commands.
@@ -17,3 +17,8 @@ Uploaded artifacts are stored in any S3-compatible backend.
 
 Special thanks to [Octopus Deploy](https://octopus.com) for their very helpful blog article ❤️:  
 https://octopus.com/blog/custom-docker-registry
+
+## Useful Links
+
+- https://docker-docs.uclv.cu/registry/spec/api/
+- https://distribution.github.io/distribution/spec/manifest-v2-2/

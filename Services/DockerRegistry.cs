@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -12,7 +15,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Newtonsoft.Json.Linq;
 
 namespace DotNetDockerRegistry;
 
@@ -39,6 +41,7 @@ public sealed class DockerRegistry
 {
     private ILogger<DockerRegistry> _logger;
     private readonly ConcurrentDictionary<string, S3UploadSession> _uploadSessions = new();
+    private static readonly Regex _repositoryNameRegex = new Regex(@"^[a-z0-9]+(?:[\/._-][a-z0-9]+)*$");
 
     public DockerRegistry(ILogger<DockerRegistry> logger)
     {
@@ -50,6 +53,9 @@ public sealed class DockerRegistry
     internal void SetupRoutes(WebApplication app)
     {
         var dockerApi = app.MapGroup("v2");
+
+        // To indicate that we're supporting V2 API
+        dockerApi.MapGet("", () => Results.Ok());
 
         // Exists
         // {name}/blobs/{digest}
@@ -65,6 +71,9 @@ public sealed class DockerRegistry
             {
                 var name = string.Join('/', segments[..^2]);
 
+                if (!IsValidRepositoryName(name))
+                    return Results.BadRequest();
+
                 var digest = segments[^1];
 
                 return await BlobExists(context, name, digest);
@@ -72,6 +81,9 @@ public sealed class DockerRegistry
             else if (segments.Length >= 3 && string.Equals(segments[^2], "manifests", StringComparison.OrdinalIgnoreCase))
             {
                 var name = string.Join('/', segments[..^2]);
+
+                if (!IsValidRepositoryName(name))
+                    return Results.BadRequest();
 
                 var reference = segments[^1];
 
@@ -95,6 +107,9 @@ public sealed class DockerRegistry
             {
                 var name = string.Join('/', segments[..^2]);
 
+                if (!IsValidRepositoryName(name))
+                    return Results.BadRequest();
+
                 var digest = segments[^1];
 
                 return await GetBlob(context, name, digest);
@@ -102,6 +117,9 @@ public sealed class DockerRegistry
             else if (segments.Length >= 3 && string.Equals(segments[^2], "manifests", StringComparison.OrdinalIgnoreCase))
             {
                 var name = string.Join('/', segments[..^2]);
+
+                if (!IsValidRepositoryName(name))
+                    return Results.BadRequest();
 
                 var reference = segments[^1];
 
@@ -121,6 +139,9 @@ public sealed class DockerRegistry
             {
                 var name = string.Join('/', segments[..^2]);
                 var uuid = Guid.NewGuid().ToString();
+
+                if (!IsValidRepositoryName(name))
+                    return Results.BadRequest();
 
                 _logger.LogDebug("Start Upload: {0} {1}", name, uuid);
 
@@ -150,6 +171,9 @@ public sealed class DockerRegistry
                 var name = string.Join('/', segments[..^3]);
                 var uuid = segments[^1];
 
+                if (!IsValidRepositoryName(name))
+                    return Results.BadRequest();
+
                 _logger.LogDebug("Patch Upload: {0} {1}", name, uuid);
 
                 if (!_uploadSessions.TryGetValue(uuid, out var session))
@@ -173,7 +197,7 @@ public sealed class DockerRegistry
         // FinishUpload / SaveManifest
         // {name}/blobs/uploads/{uuid}
         // {name}/manifests/{reference}
-        dockerApi.MapPut("{**path}", async (string path, [FromQuery(Name = "digest")] string rawDigest, HttpContext context) =>
+        dockerApi.MapPut("{**path}", async (string path, [FromQuery(Name = "digest")] string? rawDigest, HttpContext context) =>
         {
             var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
 
@@ -181,6 +205,9 @@ public sealed class DockerRegistry
             {
                 var name = string.Join('/', segments[..^3]);
                 var uuid = segments[^1];
+
+                if (!IsValidRepositoryName(name))
+                    return Results.BadRequest();
 
                 _logger.LogDebug("Finish Upload: {0} {1}", name, uuid);
 
@@ -190,6 +217,9 @@ public sealed class DockerRegistry
             {
                 var name = string.Join('/', segments[..^2]);
 
+                if (!IsValidRepositoryName(name))
+                    return Results.BadRequest();
+
                 var reference = segments[^1];
 
                 return await SaveManifest(context, name, reference);
@@ -198,6 +228,9 @@ public sealed class DockerRegistry
                 return Results.BadRequest();
         });
     }
+
+    private static bool IsValidRepositoryName(string name)
+        => _repositoryNameRegex.IsMatch(name);
 
     private async Task<IResult> BlobExists(HttpContext context, string name, string digest)
     {
@@ -229,12 +262,10 @@ public sealed class DockerRegistry
 
         var digest = ConvertChecksum(manifest.Value.Hash);
 
-        context.Response.Headers.Append("docker-content-digest", "sha256:" + digest);
+        context.Response.Headers.Append("docker-content-digest", $"sha256:{digest}");
         context.Response.Headers.ContentLength = manifest.Value.Size;
 
-        var mediaType = manifest.Value.Manifest["mediaType"].ToString();
-
-        context.Response.Headers.ContentType = mediaType;
+        context.Response.Headers.ContentType = manifest.Value.MediaType;
 
         return Results.Ok();
     }
@@ -274,11 +305,9 @@ public sealed class DockerRegistry
 
         var digest = ConvertChecksum(manifest.Value.Hash);
 
-        context.Response.Headers.Append("docker-content-digest", "sha256:" + digest);
+        context.Response.Headers.Append("docker-content-digest", $"sha256:{digest}");
 
-        var mediaType = manifest.Value.Manifest["mediaType"].ToString();
-
-        context.Response.Headers.ContentType = mediaType;
+        context.Response.Headers.ContentType = manifest.Value.MediaType;
         context.Response.Headers.ContentLength = manifest.Value.Size;
 
         using (var response = await Store.GetObject(manifest.Value.Path))
@@ -322,7 +351,7 @@ public sealed class DockerRegistry
 
         var digest = ConvertChecksum(checksum);
 
-        context.Response.Headers.Append("docker-content-digest", "sha256:" + digest);
+        context.Response.Headers.Append("docker-content-digest", $"sha256:{digest}");
 
         await Store.Copy(filePath, $"{name}/{digest}.json");
 
@@ -341,48 +370,32 @@ public sealed class DockerRegistry
         return sb.ToString();
     }
 
-    private async Task<(string Path, JObject Manifest, long Size, string Hash)?> TryReadManifest(string name, string reference)
+    private async Task<(string Path, string MediaType, long Size, string Hash)?> TryReadManifest(string name, string reference)
     {
-        var hash = reference.Split(":").Last();
-        var path = $"{name}/{reference}.json";
-        var hashPath = $"{name}/{hash}.json";
-
-        GetObjectResponse? response = null;
-        string? testedPath = null;
+        var referenceWithoutPrefix = reference.StartsWith("sha256:") ? reference.Split(":").Last() : reference;
+        var path = $"{name}/{referenceWithoutPrefix}.json";
 
         try
         {
-            try
-            {
-                response = await Store.GetObject(path);
-                testedPath = path;
-            }
-            catch (AmazonS3Exception e) when (e.StatusCode == HttpStatusCode.NotFound)
-            {
-                try
-                {
-                    response = await Store.GetObject(hashPath);
-                    testedPath = hashPath;
-                }
-                catch (AmazonS3Exception e2) when (e2.StatusCode == HttpStatusCode.NotFound)
-                {
-                    response = null;
-                }
-            }
-
-            if (response is null)
-                return null;
+            using var response = await Store.GetObject(path);
 
             string content;
 
             using (var reader = new StreamReader(response.ResponseStream))
                 content = reader.ReadToEnd();
 
-            return (testedPath, JObject.Parse(content), response.ContentLength, response.ChecksumSHA256);
+            var manifestObject = JsonSerializer.Deserialize<DockerImageManifest>(content)!;
+
+            return (
+                path,
+                manifestObject.MediaType,
+                response.ContentLength,
+                response.ChecksumSHA256
+            );
         }
-        finally
+        catch (AmazonS3Exception e) when (e.StatusCode == HttpStatusCode.NotFound)
         {
-            response?.Dispose();
+            return null;
         }
     }
 }
