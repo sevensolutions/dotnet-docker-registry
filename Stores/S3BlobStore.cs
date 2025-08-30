@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Threading.Tasks;
 using Amazon.S3;
@@ -7,12 +8,12 @@ using DotNetDockerRegistry.Options;
 
 namespace DotNetDockerRegistry.Stores;
 
-public class S3BlobStore
+public class S3Storage
 {
     private readonly IAmazonS3 _s3Client;
     private readonly string _bucketName;
 
-    public S3BlobStore(DockerRegistryS3StorageOptions options)
+    public S3Storage(DockerRegistryS3StorageOptions options)
     {
         _s3Client = new AmazonS3Client(options.AccessKeyId, options.SecretAccessKey, new AmazonS3Config()
         {
@@ -61,24 +62,8 @@ public class S3BlobStore
 
     public async Task<string> PutObject(string key, Stream stream)
     {
-        string? tempFile = null;
-        FileStream? tempFileStream = null;
-
-        try
+        return await EnsureSeekableStream(stream, async stream =>
         {
-            if (!stream.CanSeek)
-            {
-                tempFile = Path.GetTempFileName();
-
-                tempFileStream = File.Open(tempFile, FileMode.Open);
-
-                await stream.CopyToAsync(tempFileStream);
-
-                tempFileStream.Seek(0, SeekOrigin.Begin);
-
-                stream = tempFileStream;
-            }
-
             var request = new PutObjectRequest()
             {
                 BucketName = _bucketName,
@@ -90,15 +75,7 @@ public class S3BlobStore
             var response = await _s3Client.PutObjectAsync(request);
 
             return response.ChecksumSHA256;
-        }
-        finally
-        {
-            if (tempFileStream is not null)
-                await tempFileStream.DisposeAsync();
-
-            if (tempFile is not null && File.Exists(tempFile))
-                File.Delete(tempFile);
-        }
+        });
     }
 
     public async Task<S3UploadSession> BeginUpload(string uuid, string key)
@@ -117,24 +94,8 @@ public class S3BlobStore
 
     public async Task UploadPart(S3UploadSession session, Stream stream, bool isLastPart)
     {
-        string? tempFile = null;
-        FileStream? tempFileStream = null;
-
-        try
+        _ = await EnsureSeekableStream<object?>(stream, async stream =>
         {
-            if (!stream.CanSeek)
-            {
-                tempFile = Path.GetTempFileName();
-
-                tempFileStream = File.Open(tempFile, FileMode.Open);
-
-                await stream.CopyToAsync(tempFileStream);
-
-                tempFileStream.Seek(0, SeekOrigin.Begin);
-
-                stream = tempFileStream;
-            }
-
             var uploadRequest = new UploadPartRequest
             {
                 BucketName = _bucketName,
@@ -150,15 +111,9 @@ public class S3BlobStore
             var uploadResponse = await _s3Client.UploadPartAsync(uploadRequest);
 
             session.ETags.Add(new PartETag(uploadResponse, true));
-        }
-        finally
-        {
-            if (tempFileStream is not null)
-                await tempFileStream.DisposeAsync();
 
-            if (tempFile is not null && File.Exists(tempFile))
-                File.Delete(tempFile);
-        }
+            return null;
+        });
     }
 
     public async Task FinishUpload(S3UploadSession session)
@@ -217,5 +172,37 @@ public class S3BlobStore
         };
 
         await _s3Client.CopyObjectAsync(copyRequest);
+    }
+
+    private async Task<TReturn> EnsureSeekableStream<TReturn>(Stream stream, Func<Stream, Task<TReturn>> action)
+    {
+        string? tempFile = null;
+        FileStream? tempFileStream = null;
+
+        try
+        {
+            if (!stream.CanSeek)
+            {
+                tempFile = Path.GetTempFileName();
+
+                tempFileStream = File.Open(tempFile, FileMode.Open);
+
+                await stream.CopyToAsync(tempFileStream);
+
+                tempFileStream.Seek(0, SeekOrigin.Begin);
+
+                stream = tempFileStream;
+            }
+
+            return await action(stream);
+        }
+        finally
+        {
+            if (tempFileStream is not null)
+                await tempFileStream.DisposeAsync();
+
+            if (tempFile is not null && File.Exists(tempFile))
+                File.Delete(tempFile);
+        }
     }
 }

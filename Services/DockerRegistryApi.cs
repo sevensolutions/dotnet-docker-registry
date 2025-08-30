@@ -44,8 +44,15 @@ public sealed class DockerRegistryApi
 
                 var digest = segments[^1];
 
-                if (await _registry.BlobExists(context, name, new Digest(digest)))
+                var blobData = await _registry.BlobExists(name, new Digest(digest));
+
+                if (blobData is not null)
+                {
+                    context.Response.Headers.ContentLength = blobData.Value.ContentLength;
+                    context.Response.Headers.Append("docker-content-digest", digest.ToString());
+
                     return Results.Ok();
+                }
 
                 return Results.NotFound();
             }
@@ -58,8 +65,19 @@ public sealed class DockerRegistryApi
 
                 var reference = segments[^1];
 
-                if (await _registry.ManifestExists(context, name, reference))
+                var manifest = await _registry.GetManifest(name, reference);
+
+                if (manifest is not null)
+                {
+                    var digest = DockerRegistry.B64Sha256ToDigest(manifest.Value.Hash);
+
+                    context.Response.Headers.Append("docker-content-digest", digest.ToString());
+                    context.Response.Headers.ContentLength = manifest.Value.ContentLength;
+
+                    context.Response.Headers.ContentType = manifest.Value.Manifest.MediaType;
+
                     return Results.Ok();
+                }
 
                 return Results.NotFound();
             }
@@ -86,7 +104,12 @@ public sealed class DockerRegistryApi
 
                 var digest = segments[^1];
 
-                return await _registry.GetBlob(context, name, new Digest(digest));
+                var downloadUrl = await _registry.GetBlobDownloadUrl(name, new Digest(digest));
+
+                if (downloadUrl is not null)
+                    return Results.Redirect(downloadUrl, false, true);
+
+                return Results.NotFound();
             }
             else if (segments.Length >= 3 && string.Equals(segments[^2], "manifests", StringComparison.OrdinalIgnoreCase))
             {
@@ -97,7 +120,18 @@ public sealed class DockerRegistryApi
 
                 var reference = segments[^1];
 
-                return await _registry.GetManifest(context, name, reference);
+                var manifest = await _registry.GetManifest(name, reference);
+
+                if (manifest is null)
+                    return Results.NotFound();
+
+                var digest = DockerRegistry.B64Sha256ToDigest(manifest.Value.Hash);
+
+                context.Response.Headers.Append("docker-content-digest", $"{digest}");
+
+                context.Response.Headers.ContentLength = manifest.Value.ContentLength;
+
+                return Results.Content(manifest.Value.RawManifest, manifest.Value.Manifest.MediaType);
             }
             else
                 return Results.BadRequest();

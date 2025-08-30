@@ -24,10 +24,10 @@ public sealed class DockerRegistry
 
     public DockerRegistry(IOptions<DockerRegistryOptions> options)
     {
-        Store = new S3BlobStore(options.Value.Storage.S3);
+        Store = new S3Storage(options.Value.Storage.S3);
     }
 
-    public S3BlobStore Store { get; }
+    public S3Storage Store { get; }
 
     public bool IsValidRepositoryName(string name, out DockerApiError error)
     {
@@ -49,7 +49,7 @@ public sealed class DockerRegistry
         return false;
     }
 
-    public async Task<bool> BlobExists(HttpContext context, string name, Digest digest)
+    public async Task<(long ContentLength, Digest Digest)?> BlobExists(string name, Digest digest)
     {
         var path = $"{name}/{digest.Hash}";
 
@@ -57,35 +57,15 @@ public sealed class DockerRegistry
         {
             var metadata = await Store.GetObjectMetadata(path);
 
-            context.Response.Headers.ContentLength = metadata.ContentLength;
-            context.Response.Headers.Append("docker-content-digest", digest.ToString());
-
-            return true;
+            return (metadata.ContentLength, digest);
         }
         catch (AmazonS3Exception e) when (e.StatusCode == HttpStatusCode.NotFound)
         {
-            return false;
+            return null;
         }
     }
 
-    public async Task<bool> ManifestExists(HttpContext context, string name, string reference)
-    {
-        var manifest = await TryReadManifest(name, reference);
-
-        if (manifest is null)
-            return false;
-
-        var digest = B64Sha256ToDiget(manifest.Value.Hash);
-
-        context.Response.Headers.Append("docker-content-digest", digest.ToString());
-        context.Response.Headers.ContentLength = manifest.Value.Size;
-
-        context.Response.Headers.ContentType = manifest.Value.MediaType;
-
-        return true;
-    }
-
-    public async Task<IResult> GetBlob(HttpContext context, string name, Digest digest)
+    public async Task<string?> GetBlobDownloadUrl(string name, Digest digest)
     {
         var path = $"{name}/{digest.Hash}";
 
@@ -93,43 +73,44 @@ public sealed class DockerRegistry
         {
             var response = await Store.GetObjectMetadata(path);
 
-            // context.Response.Headers.ContentLength = Store.GetSize(hash);
-            // await using (var fs = Store.OpenRead(hash))
-            // {
-            //     await fs.CopyToAsync(context.Response.Body);
-            //     return Results.Ok();
-            // }
-
             var downloadUrl = Store.GetPreSignedUrl(path);
 
-            return Results.Redirect(downloadUrl, false, true);
+            return downloadUrl;
         }
         catch
         {
-            return Results.NotFound();
+            return null;
         }
     }
 
-    public async Task<IResult> GetManifest(HttpContext context, string name, string reference)
+    public async Task<(DockerImageManifest Manifest, string RawManifest, long ContentLength, string Hash)?> GetManifest(string name, string reference)
     {
-        var manifest = await TryReadManifest(name, reference);
+        // reference can be a digest or a tag
+        var referenceWithoutPrefix = new Digest(reference).Hash; // reference.StartsWith("sha256:") ? reference.Split(":").Last() : reference;
+        var path = $"{name}/{referenceWithoutPrefix}.json";
 
-        if (manifest is null)
-            return Results.NotFound();
-
-        var digest = B64Sha256ToDiget(manifest.Value.Hash);
-
-        context.Response.Headers.Append("docker-content-digest", $"{digest}");
-
-        context.Response.Headers.ContentType = manifest.Value.MediaType;
-        context.Response.Headers.ContentLength = manifest.Value.Size;
-
-        using (var response = await Store.GetObject(manifest.Value.Path))
+        try
         {
-            await response.ResponseStream.CopyToAsync(context.Response.Body);
-        }
+            using var response = await Store.GetObject(path);
 
-        return Results.Ok();
+            string content;
+
+            using (var reader = new StreamReader(response.ResponseStream))
+                content = reader.ReadToEnd();
+
+            var manifestObject = JsonSerializer.Deserialize<DockerImageManifest>(content)!;
+
+            return (
+                manifestObject,
+                content,
+                response.ContentLength,
+                response.ChecksumSHA256
+            );
+        }
+        catch (AmazonS3Exception e) when (e.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
     }
 
     public async Task<IResult> BeginUpload(HttpContext context, string name)
@@ -216,7 +197,7 @@ public sealed class DockerRegistry
 
         var checksum = await Store.PutObject(filePath, context.Request.Body);
 
-        var digest = B64Sha256ToDiget(checksum);
+        var digest = B64Sha256ToDigest(checksum);
 
         context.Response.Headers.Append("docker-content-digest", digest.ToString());
 
@@ -225,7 +206,7 @@ public sealed class DockerRegistry
         return Results.Created($"/v2/{name}/manifests/{reference}", null);
     }
 
-    private static Digest B64Sha256ToDiget(string base64Checksum)
+    public static Digest B64Sha256ToDigest(string base64Checksum)
     {
         var bytes = Convert.FromBase64String(base64Checksum);
 
@@ -235,35 +216,5 @@ public sealed class DockerRegistry
             sb.Append(b.ToString("x2"));
 
         return new Digest(sb.ToString());
-    }
-
-    private async Task<(string Path, string MediaType, long Size, string Hash)?> TryReadManifest(string name, string reference)
-    {
-        // reference can be a digest or a tag
-        var referenceWithoutPrefix = new Digest(reference).Hash; // reference.StartsWith("sha256:") ? reference.Split(":").Last() : reference;
-        var path = $"{name}/{referenceWithoutPrefix}.json";
-
-        try
-        {
-            using var response = await Store.GetObject(path);
-
-            string content;
-
-            using (var reader = new StreamReader(response.ResponseStream))
-                content = reader.ReadToEnd();
-
-            var manifestObject = JsonSerializer.Deserialize<DockerImageManifest>(content)!;
-
-            return (
-                path,
-                manifestObject.MediaType,
-                response.ContentLength,
-                response.ChecksumSHA256
-            );
-        }
-        catch (AmazonS3Exception e) when (e.StatusCode == HttpStatusCode.NotFound)
-        {
-            return null;
-        }
     }
 }
