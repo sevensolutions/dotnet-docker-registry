@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace DotNetDockerRegistry;
+namespace DotNetDockerRegistry.Core;
 
 // https://distribution.github.io/distribution/spec/manifest-v2-2/
 

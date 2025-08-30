@@ -2,23 +2,25 @@ using System.IO;
 using System.Threading.Tasks;
 using Amazon.S3;
 using Amazon.S3.Model;
+using DotNetDockerRegistry.Core;
+using DotNetDockerRegistry.Options;
 
-namespace DotNetDockerRegistry;
+namespace DotNetDockerRegistry.Stores;
 
 public class S3BlobStore
 {
     private readonly IAmazonS3 _s3Client;
     private readonly string _bucketName;
 
-    public S3BlobStore(string bucketName)
+    public S3BlobStore(DockerRegistryS3StorageOptions options)
     {
-        _s3Client = new AmazonS3Client("minioadmin", "minioadmin", new AmazonS3Config()
+        _s3Client = new AmazonS3Client(options.AccessKeyId, options.SecretAccessKey, new AmazonS3Config()
         {
-            ServiceURL = "http://localhost:9000/",
-            ForcePathStyle = true
+            ServiceURL = options.ServiceUrl,
+            ForcePathStyle = options.ForcePathStyle
         });
 
-        _bucketName = bucketName;
+        _bucketName = options.BucketName;
     }
 
     public async Task<GetObjectMetadataResponse> GetObjectMetadata(string key)

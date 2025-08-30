@@ -1,4 +1,4 @@
-namespace DotNetDockerRegistry;
+namespace DotNetDockerRegistry.Core;
 
 public record struct Digest
 {

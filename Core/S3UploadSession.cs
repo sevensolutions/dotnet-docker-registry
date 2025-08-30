@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using Amazon.S3.Model;
 
-namespace DotNetDockerRegistry;
+namespace DotNetDockerRegistry.Core;
 
 public sealed class S3UploadSession : IDisposable
 {

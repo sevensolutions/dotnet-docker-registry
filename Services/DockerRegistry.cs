@@ -8,7 +8,11 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Amazon.S3;
+using DotNetDockerRegistry.Core;
+using DotNetDockerRegistry.Options;
+using DotNetDockerRegistry.Stores;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
 
 namespace DotNetDockerRegistry;
 
@@ -18,7 +22,12 @@ public sealed class DockerRegistry
 
     private readonly ConcurrentDictionary<string, S3UploadSession> _uploadSessions = new();
 
-    public S3BlobStore Store { get; } = new S3BlobStore("docker");
+    public DockerRegistry(IOptions<DockerRegistryOptions> options)
+    {
+        Store = new S3BlobStore(options.Value.Storage.S3);
+    }
+
+    public S3BlobStore Store { get; }
 
     public bool IsValidRepositoryName(string name, out DockerApiError error)
     {
