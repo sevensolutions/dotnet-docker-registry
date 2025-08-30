@@ -99,7 +99,7 @@ public class S3BlobStore
         }
     }
 
-    public async Task<S3UploadSession> BeginUpload(string key)
+    public async Task<S3UploadSession> BeginUpload(string uuid, string key)
     {
         var initiateRequest = new InitiateMultipartUploadRequest
         {
@@ -110,7 +110,7 @@ public class S3BlobStore
 
         var initResponse = await _s3Client.InitiateMultipartUploadAsync(initiateRequest);
 
-        return new S3UploadSession(key, initResponse.UploadId);
+        return new S3UploadSession(uuid, key, initResponse.UploadId);
     }
 
     public async Task UploadPart(S3UploadSession session, Stream stream, bool isLastPart)
@@ -136,7 +136,7 @@ public class S3BlobStore
             var uploadRequest = new UploadPartRequest
             {
                 BucketName = _bucketName,
-                Key = session.Key,
+                Key = session.StorageKey,
                 UploadId = session.UploadId,
                 PartNumber = session.GetNextPartNumber(),
                 PartSize = stream.Length,
@@ -164,7 +164,7 @@ public class S3BlobStore
         var completeRequest = new CompleteMultipartUploadRequest
         {
             BucketName = _bucketName,
-            Key = session.Key,
+            Key = session.StorageKey,
             UploadId = session.UploadId,
             PartETags = session.ETags
         };
@@ -177,7 +177,7 @@ public class S3BlobStore
         await _s3Client.AbortMultipartUploadAsync(new AbortMultipartUploadRequest()
         {
             BucketName = _bucketName,
-            Key = session.Key,
+            Key = session.StorageKey,
             UploadId = session.UploadId
         });
     }

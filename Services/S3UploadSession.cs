@@ -9,13 +9,15 @@ public sealed class S3UploadSession : IDisposable
 {
     private int _partNumber = 0;
 
-    public S3UploadSession(string key, string uploadId)
+    public S3UploadSession(string uuid, string key, string uploadId)
     {
-        Key = key;
+        Uuid = uuid;
+        StorageKey = key;
         UploadId = uploadId;
     }
 
-    public string Key { get; set; }
+    public string Uuid { get; }
+    public string StorageKey { get; set; }
     public string UploadId { get; set; }
 
     public List<PartETag> ETags { get; } = new List<PartETag>();
