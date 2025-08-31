@@ -55,7 +55,7 @@ public sealed class DockerRegistry : IHostedService
         return false;
     }
 
-    public async Task<(long ContentLength, Digest Digest)?> BlobExists(string name, Digest digest)
+    public async Task<(long ContentLength, Digest Digest)?> BlobExistsAsync(string name, Digest digest)
     {
         var path = $"{name}/{digest.Hash}";
 
@@ -71,7 +71,7 @@ public sealed class DockerRegistry : IHostedService
         }
     }
 
-    public async Task<string?> GetBlobDownloadUrl(string name, Digest digest)
+    public async Task<string?> GetBlobDownloadUrlAsync(string name, Digest digest)
     {
         var path = $"{name}/{digest.Hash}";
 
@@ -89,7 +89,7 @@ public sealed class DockerRegistry : IHostedService
         }
     }
 
-    public async Task<(DockerImageManifest Manifest, string RawManifest, long ContentLength, string Hash)?> GetManifest(string name, string reference)
+    public async Task<(DockerImageManifest Manifest, string RawManifest, long ContentLength, string Hash)?> GetManifestAsync(string name, string reference)
     {
         // reference can be a digest or a tag
         var referenceWithoutPrefix = new Digest(reference).Hash; // reference.StartsWith("sha256:") ? reference.Split(":").Last() : reference;
@@ -97,7 +97,7 @@ public sealed class DockerRegistry : IHostedService
 
         try
         {
-            using var response = await _store.GetObject(path);
+            using var response = await _store.GetObjectAsync(path);
 
             string content;
 
@@ -119,11 +119,11 @@ public sealed class DockerRegistry : IHostedService
         }
     }
 
-    public async Task<IResult> BeginUpload(HttpContext context, string name)
+    public async Task<IResult> BeginUploadAsync(HttpContext context, string name)
     {
         var uuid = Guid.NewGuid().ToString();
 
-        var session = await _store.BeginUpload(uuid, $"uploads/{uuid}");
+        var session = await _store.BeginUploadAsync(uuid, $"uploads/{uuid}");
 
         await _sessionStorage.SaveSessionAsync(session);
 
@@ -135,7 +135,7 @@ public sealed class DockerRegistry : IHostedService
         return Results.Accepted();
     }
 
-    public async Task<IResult> Upload(HttpContext context, string name, string uuid)
+    public async Task<IResult> UploadAsync(HttpContext context, string name, string uuid)
     {
         var session = await _sessionStorage.UpdateSessionAsync(uuid, session =>
         {
@@ -156,7 +156,7 @@ public sealed class DockerRegistry : IHostedService
 
         _logger.LogDebug($"Upload Range: {context.Request.Headers.ContentRange}");
 
-        var etag = await _store.UploadPart(session, context.Request.Body, false);
+        var etag = await _store.UploadPartAsync(session, context.Request.Body, false);
 
         await _sessionStorage.UpdateSessionAsync(uuid, session =>
         {
@@ -176,7 +176,7 @@ public sealed class DockerRegistry : IHostedService
         return Results.Accepted();
     }
 
-    public async Task<IResult> FinishUpload(HttpContext context, string name, string uuid, Digest digest)
+    public async Task<IResult> FinishUploadAsync(HttpContext context, string name, string uuid, Digest digest)
     {
         var session = await _sessionStorage.UpdateSessionAsync(uuid, session =>
         {
@@ -199,7 +199,7 @@ public sealed class DockerRegistry : IHostedService
         {
             var rangeHeader = context.Request.Headers.ContentRange;
 
-            var etag = await _store.UploadPart(session, context.Request.Body, true);
+            var etag = await _store.UploadPartAsync(session, context.Request.Body, true);
 
             session = await _sessionStorage.UpdateSessionAsync(uuid, session =>
             {
@@ -212,9 +212,9 @@ public sealed class DockerRegistry : IHostedService
             });
         }
 
-        await _store.FinishUpload(session);
+        await _store.FinishUploadAsync(session);
 
-        await _store.Move(session.StorageKey, $"{name}/{digest.Hash}");
+        await _store.MoveAsync(session.StorageKey, $"{name}/{digest.Hash}");
 
         context.Response.Headers.ContentLength = 0;
         context.Response.Headers.Append("docker-content-digest", digest.ToString());
@@ -222,7 +222,7 @@ public sealed class DockerRegistry : IHostedService
         return Results.Created($"/v2/{name}/blobs/{digest.Hash}", null);
     }
 
-    public async Task<IResult> AbortUpload(HttpContext context, string uuid)
+    public async Task<IResult> AbortUploadAsync(HttpContext context, string uuid)
     {
         var session = await _sessionStorage.UpdateSessionAsync(uuid, session =>
         {
@@ -239,7 +239,7 @@ public sealed class DockerRegistry : IHostedService
             }));
         }
 
-        await _store.AbortUpload(session);
+        await _store.AbortUploadAsync(session);
 
         _sessionStorage.DeleteSessionAsync(session.Uuid);
 
@@ -248,17 +248,17 @@ public sealed class DockerRegistry : IHostedService
         return Results.NoContent();
     }
 
-    public async Task<IResult> SaveManifest(HttpContext context, string name, string reference)
+    public async Task<IResult> SaveManifestAsync(HttpContext context, string name, string reference)
     {
         var filePath = $"{name}/{reference}.json";
 
-        var checksum = await _store.PutObject(filePath, context.Request.Body);
+        var checksum = await _store.PutObjectAsync(filePath, context.Request.Body);
 
         var digest = B64Sha256ToDigest(checksum);
 
         context.Response.Headers.Append("docker-content-digest", digest.ToString());
 
-        await _store.Copy(filePath, $"{name}/{digest}.json");
+        await _store.CopyAsync(filePath, $"{name}/{digest}.json");
 
         return Results.Created($"/v2/{name}/manifests/{reference}", null);
     }
@@ -306,7 +306,7 @@ public sealed class DockerRegistry : IHostedService
                     var session = await _sessionStorage.GetSessionUnsafeAsync(uuid);
 
                     if (session is not null)
-                        await _store.AbortUpload(session);
+                        await _store.AbortUploadAsync(session);
                 }
                 catch (Exception ex)
                 {

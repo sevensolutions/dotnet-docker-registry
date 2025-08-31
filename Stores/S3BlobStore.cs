@@ -48,7 +48,7 @@ public class S3Storage
         });
     }
 
-    public async Task<GetObjectResponse> GetObject(string key)
+    public async Task<GetObjectResponse> GetObjectAsync(string key)
     {
         var request = new GetObjectRequest
         {
@@ -61,7 +61,7 @@ public class S3Storage
         return response;
     }
 
-    public async Task<string> PutObject(string key, Stream stream)
+    public async Task<string> PutObjectAsync(string key, Stream stream)
     {
         return await EnsureSeekableStream(stream, async stream =>
         {
@@ -79,7 +79,7 @@ public class S3Storage
         });
     }
 
-    public async Task<S3UploadSession> BeginUpload(string uuid, string key)
+    public async Task<S3UploadSession> BeginUploadAsync(string uuid, string key)
     {
         var initiateRequest = new InitiateMultipartUploadRequest
         {
@@ -98,7 +98,7 @@ public class S3Storage
         };
     }
 
-    public async Task<PartETag> UploadPart(S3UploadSession session, Stream stream, bool isLastPart)
+    public async Task<PartETag> UploadPartAsync(S3UploadSession session, Stream stream, bool isLastPart)
     {
         return await EnsureSeekableStream(stream, async stream =>
         {
@@ -120,7 +120,7 @@ public class S3Storage
         });
     }
 
-    public async Task FinishUpload(S3UploadSession session)
+    public async Task FinishUploadAsync(S3UploadSession session)
     {
         var completeRequest = new CompleteMultipartUploadRequest
         {
@@ -136,7 +136,7 @@ public class S3Storage
         await _s3Client.CompleteMultipartUploadAsync(completeRequest);
     }
 
-    public async Task AbortUpload(S3UploadSession session)
+    public async Task AbortUploadAsync(S3UploadSession session)
     {
         await _s3Client.AbortMultipartUploadAsync(new AbortMultipartUploadRequest()
         {
@@ -146,7 +146,7 @@ public class S3Storage
         });
     }
 
-    public async Task Move(string oldKey, string newKey)
+    public async Task MoveAsync(string oldKey, string newKey)
     {
         // Copy the object to the new location
         var copyRequest = new CopyObjectRequest
@@ -168,7 +168,7 @@ public class S3Storage
         await _s3Client.DeleteObjectAsync(deleteRequest);
     }
 
-    public async Task Copy(string oldKey, string newKey)
+    public async Task CopyAsync(string oldKey, string newKey)
     {
         var copyRequest = new CopyObjectRequest
         {

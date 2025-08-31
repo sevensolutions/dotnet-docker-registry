@@ -5,6 +5,12 @@ namespace DotNetDockerRegistry.Options;
 public sealed class DockerRegistryOptions
 {
     [Required]
+    public string ServerUrl { get; set; } = default!;
+
+    [Required]
+    public string Secret { get; set; } = default!;
+
+    [Required]
     public DockerRegistryStorageOptions Storage { get; set; } = default!;
 }
 

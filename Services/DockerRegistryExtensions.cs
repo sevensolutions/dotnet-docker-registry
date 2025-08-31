@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace DotNetDockerRegistry.Services;
@@ -16,12 +17,10 @@ public static class DockerRegistryExtensions
         return services;
     }
 
-    public static WebApplication UseDockerRegistry(this WebApplication application)
+    public static RouteGroupBuilder UseDockerRegistry(this WebApplication application)
     {
         var registry = application.Services.GetRequiredService<DockerRegistryApi>();
 
-        registry.SetupRoutes(application);
-
-        return application;
+        return registry.SetupRoutes(application);
     }
 }

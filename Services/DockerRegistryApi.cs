@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging;
 
 namespace DotNetDockerRegistry.Services;
@@ -19,12 +20,12 @@ public sealed class DockerRegistryApi
         _registry = registry;
     }
 
-    internal void SetupRoutes(WebApplication app)
+    internal RouteGroupBuilder SetupRoutes(WebApplication app)
     {
         var dockerApi = app.MapGroup("v2");
 
         // To indicate that we're supporting V2 API
-        dockerApi.MapGet("", () => Results.Ok());
+        dockerApi.MapGet("", () => Results.Ok()).AllowAnonymous();
 
         // Exists
         // {name}/blobs/{digest}
@@ -45,7 +46,7 @@ public sealed class DockerRegistryApi
 
                 var digest = segments[^1];
 
-                var blobData = await _registry.BlobExists(name, new Digest(digest));
+                var blobData = await _registry.BlobExistsAsync(name, new Digest(digest));
 
                 if (blobData is not null)
                 {
@@ -66,7 +67,7 @@ public sealed class DockerRegistryApi
 
                 var reference = segments[^1];
 
-                var manifest = await _registry.GetManifest(name, reference);
+                var manifest = await _registry.GetManifestAsync(name, reference);
 
                 if (manifest is not null)
                 {
@@ -105,7 +106,7 @@ public sealed class DockerRegistryApi
 
                 var digest = segments[^1];
 
-                var downloadUrl = await _registry.GetBlobDownloadUrl(name, new Digest(digest));
+                var downloadUrl = await _registry.GetBlobDownloadUrlAsync(name, new Digest(digest));
 
                 if (downloadUrl is not null)
                     return Results.Redirect(downloadUrl, false, true);
@@ -121,7 +122,7 @@ public sealed class DockerRegistryApi
 
                 var reference = segments[^1];
 
-                var manifest = await _registry.GetManifest(name, reference);
+                var manifest = await _registry.GetManifestAsync(name, reference);
 
                 if (manifest is null)
                     return Results.NotFound();
@@ -151,7 +152,7 @@ public sealed class DockerRegistryApi
                 if (!_registry.IsValidRepositoryName(name, out var error))
                     return Results.BadRequest(new DockerApiErrors(error));
 
-                return await _registry.BeginUpload(context, name);
+                return await _registry.BeginUploadAsync(context, name);
             }
             else
                 return Results.BadRequest();
@@ -177,7 +178,7 @@ public sealed class DockerRegistryApi
 
                 _logger.LogDebug("Patch Upload: {0} {1}", name, uuid);
 
-                return await _registry.Upload(context, name, uuid);
+                return await _registry.UploadAsync(context, name, uuid);
             }
             else
                 return Results.BadRequest();
@@ -207,7 +208,7 @@ public sealed class DockerRegistryApi
 
                 _logger.LogDebug("Finish Upload: {0} {1}", name, uuid);
 
-                return await _registry.FinishUpload(context, name, uuid, new Digest(digest));
+                return await _registry.FinishUploadAsync(context, name, uuid, new Digest(digest));
             }
             else if (segments.Length >= 3 && string.Equals(segments[^2], "manifests", StringComparison.OrdinalIgnoreCase))
             {
@@ -218,7 +219,7 @@ public sealed class DockerRegistryApi
 
                 var reference = segments[^1];
 
-                return await _registry.SaveManifest(context, name, reference);
+                return await _registry.SaveManifestAsync(context, name, reference);
             }
             else
                 return Results.BadRequest();
@@ -240,10 +241,12 @@ public sealed class DockerRegistryApi
 
                 _logger.LogDebug("Cancel Upload: {0} {1}", name, uuid);
 
-                return await _registry.AbortUpload(context, uuid);
+                return await _registry.AbortUploadAsync(context, uuid);
             }
             else
                 return Results.BadRequest();
         });
+
+        return dockerApi;
     }
 }
