@@ -1,5 +1,5 @@
-using DotNetDockerRegistry;
 using DotNetDockerRegistry.Options;
+using DotNetDockerRegistry.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 

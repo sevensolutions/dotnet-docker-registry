@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace DotNetDockerRegistry;
+namespace DotNetDockerRegistry.Services;
 
 public static class DockerRegistryExtensions
 {
@@ -10,6 +10,8 @@ public static class DockerRegistryExtensions
         services.AddSingleton<SessionStorage>();
         services.AddSingleton<DockerRegistry>();
         services.AddSingleton<DockerRegistryApi>();
+
+        services.AddHostedService(sp => sp.GetRequiredService<DockerRegistry>());
 
         return services;
     }

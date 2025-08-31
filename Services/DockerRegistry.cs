@@ -5,33 +5,35 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Amazon.S3;
 using DotNetDockerRegistry.Core;
 using DotNetDockerRegistry.Options;
 using DotNetDockerRegistry.Stores;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace DotNetDockerRegistry;
+namespace DotNetDockerRegistry.Services;
 
-public sealed class DockerRegistry
+public sealed class DockerRegistry : IHostedService
 {
     private static readonly Regex _repositoryNameRegex = new Regex(@"^[a-z0-9]+(?:[\/._-][a-z0-9]+)*$");
 
     private readonly ILogger<DockerRegistry> _logger;
     private readonly SessionStorage _sessionStorage;
+    private readonly S3Storage _store;
+    private Timer? _cleanupTimer;
 
     public DockerRegistry(ILogger<DockerRegistry> logger, IOptions<DockerRegistryOptions> options, SessionStorage sessionStorage)
     {
         _logger = logger;
         _sessionStorage = sessionStorage;
 
-        Store = new S3Storage(options.Value.Storage.S3);
+        _store = new S3Storage(options.Value.Storage.S3);
     }
-
-    public S3Storage Store { get; }
 
     public bool IsValidRepositoryName(string name, out DockerApiError error)
     {
@@ -59,7 +61,7 @@ public sealed class DockerRegistry
 
         try
         {
-            var metadata = await Store.GetObjectMetadata(path);
+            var metadata = await _store.GetObjectMetadata(path);
 
             return (metadata.ContentLength, digest);
         }
@@ -75,9 +77,9 @@ public sealed class DockerRegistry
 
         try
         {
-            var response = await Store.GetObjectMetadata(path);
+            var response = await _store.GetObjectMetadata(path);
 
-            var downloadUrl = Store.GetPreSignedUrl(path);
+            var downloadUrl = _store.GetPreSignedUrl(path);
 
             return downloadUrl;
         }
@@ -95,7 +97,7 @@ public sealed class DockerRegistry
 
         try
         {
-            using var response = await Store.GetObject(path);
+            using var response = await _store.GetObject(path);
 
             string content;
 
@@ -121,7 +123,7 @@ public sealed class DockerRegistry
     {
         var uuid = Guid.NewGuid().ToString();
 
-        var session = await Store.BeginUpload(uuid, $"uploads/{uuid}");
+        var session = await _store.BeginUpload(uuid, $"uploads/{uuid}");
 
         await _sessionStorage.SaveSessionAsync(session);
 
@@ -154,7 +156,7 @@ public sealed class DockerRegistry
 
         _logger.LogDebug($"Upload Range: {context.Request.Headers.ContentRange}");
 
-        var etag = await Store.UploadPart(session, context.Request.Body, false);
+        var etag = await _store.UploadPart(session, context.Request.Body, false);
 
         await _sessionStorage.UpdateSessionAsync(uuid, session =>
         {
@@ -197,7 +199,7 @@ public sealed class DockerRegistry
         {
             var rangeHeader = context.Request.Headers.ContentRange;
 
-            var etag = await Store.UploadPart(session, context.Request.Body, true);
+            var etag = await _store.UploadPart(session, context.Request.Body, true);
 
             session = await _sessionStorage.UpdateSessionAsync(uuid, session =>
             {
@@ -210,9 +212,9 @@ public sealed class DockerRegistry
             });
         }
 
-        await Store.FinishUpload(session);
+        await _store.FinishUpload(session);
 
-        await Store.Move(session.StorageKey, $"{name}/{digest.Hash}");
+        await _store.Move(session.StorageKey, $"{name}/{digest.Hash}");
 
         context.Response.Headers.ContentLength = 0;
         context.Response.Headers.Append("docker-content-digest", digest.ToString());
@@ -237,7 +239,7 @@ public sealed class DockerRegistry
             }));
         }
 
-        await Store.AbortUpload(session);
+        await _store.AbortUpload(session);
 
         _sessionStorage.DeleteSessionAsync(session.Uuid);
 
@@ -250,13 +252,13 @@ public sealed class DockerRegistry
     {
         var filePath = $"{name}/{reference}.json";
 
-        var checksum = await Store.PutObject(filePath, context.Request.Body);
+        var checksum = await _store.PutObject(filePath, context.Request.Body);
 
         var digest = B64Sha256ToDigest(checksum);
 
         context.Response.Headers.Append("docker-content-digest", digest.ToString());
 
-        await Store.Copy(filePath, $"{name}/{digest}.json");
+        await _store.Copy(filePath, $"{name}/{digest}.json");
 
         return Results.Created($"/v2/{name}/manifests/{reference}", null);
     }
@@ -271,5 +273,54 @@ public sealed class DockerRegistry
             sb.Append(b.ToString("x2"));
 
         return new Digest(sb.ToString());
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        _cleanupTimer = new Timer(CleanupExpiredUploadSessions, null, 30_000, 30_000);
+
+        return Task.CompletedTask;
+    }
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        _cleanupTimer?.Dispose();
+
+        return Task.CompletedTask;
+    }
+
+    private async void CleanupExpiredUploadSessions(object? state)
+    {
+        try
+        {
+            var expiresSessions = _sessionStorage.GetExpiredSessions();
+
+            var count = expiresSessions.Count();
+
+            if (count > 0)
+                _logger.LogInformation("Cleanup {count} expired upload sessions.", count);
+
+            foreach (var uuid in expiresSessions)
+            {
+                try
+                {
+                    var session = await _sessionStorage.GetSessionUnsafeAsync(uuid);
+
+                    if (session is not null)
+                        await _store.AbortUpload(session);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to cleanup expired session with UUID \"{uuid}\".", uuid);
+                }
+                finally
+                {
+                    _sessionStorage.DeleteSessionAsync(uuid);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to cleanup expired upload sessions.");
+        }
     }
 }

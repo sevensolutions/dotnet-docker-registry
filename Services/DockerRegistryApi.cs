@@ -6,7 +6,7 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
-namespace DotNetDockerRegistry;
+namespace DotNetDockerRegistry.Services;
 
 public sealed class DockerRegistryApi
 {
