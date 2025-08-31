@@ -2,6 +2,7 @@ using System;
 using DotNetDockerRegistry.Core;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
@@ -164,6 +165,10 @@ public sealed class DockerRegistryApi
 
             if (segments.Length >= 4 && string.Equals(segments[^3], "blobs", StringComparison.OrdinalIgnoreCase) && string.Equals(segments[^2], "uploads", StringComparison.OrdinalIgnoreCase))
             {
+                var maxSizeFeature = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+                if (maxSizeFeature is not null && !maxSizeFeature.IsReadOnly)
+                    maxSizeFeature.MaxRequestBodySize = null;
+
                 var name = string.Join('/', segments[..^3]);
                 var uuid = segments[^1];
 
@@ -187,6 +192,10 @@ public sealed class DockerRegistryApi
 
             if (segments.Length >= 4 && string.Equals(segments[^3], "blobs", StringComparison.OrdinalIgnoreCase) && string.Equals(segments[^2], "uploads", StringComparison.OrdinalIgnoreCase))
             {
+                var maxSizeFeature = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+                if (maxSizeFeature is not null && !maxSizeFeature.IsReadOnly)
+                    maxSizeFeature.MaxRequestBodySize = null;
+
                 var name = string.Join('/', segments[..^3]);
                 var uuid = segments[^1];
 

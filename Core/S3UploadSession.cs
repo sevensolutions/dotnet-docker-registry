@@ -1,31 +1,20 @@
-using System;
 using System.Collections.Generic;
-using System.Threading;
-using Amazon.S3.Model;
 
 namespace DotNetDockerRegistry.Core;
 
-public sealed class S3UploadSession : IDisposable
+public sealed class S3UploadSession
 {
-    private int _partNumber = 0;
+    public string Uuid { get; set; } = default!;
+    public string StorageKey { get; set; } = default!;
+    public string UploadId { get; set; } = default!;
+    public int PartNumber { get; set; } = default!;
 
-    public S3UploadSession(string uuid, string key, string uploadId)
-    {
-        Uuid = uuid;
-        StorageKey = key;
-        UploadId = uploadId;
-    }
+    public List<S3UploadSessionETag> ETags { get; set; } = new List<S3UploadSessionETag>();
+}
 
-    public string Uuid { get; }
-    public string StorageKey { get; set; }
-    public string UploadId { get; set; }
-
-    public List<PartETag> ETags { get; } = new List<PartETag>();
-
-    public void Dispose()
-    {
-    }
-
-    public int GetNextPartNumber()
-        => Interlocked.Increment(ref _partNumber);
+public sealed class S3UploadSessionETag
+{
+    public int PartNumber { get; set; } = default!;
+    public string ETag { get; set; } = default!;
+    public string Checksum { get; set; } = default!;
 }

@@ -22,3 +22,4 @@ https://octopus.com/blog/custom-docker-registry
 
 - https://docker-docs.uclv.cu/registry/spec/api/
 - https://distribution.github.io/distribution/spec/manifest-v2-2/
+- https://www.digitalocean.com/blog/inside-container-registry-mechanics-of-push-pull

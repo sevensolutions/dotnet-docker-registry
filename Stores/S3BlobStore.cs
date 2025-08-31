@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -89,30 +90,33 @@ public class S3Storage
 
         var initResponse = await _s3Client.InitiateMultipartUploadAsync(initiateRequest);
 
-        return new S3UploadSession(uuid, key, initResponse.UploadId);
+        return new S3UploadSession()
+        {
+            Uuid = uuid,
+            StorageKey = key,
+            UploadId = initResponse.UploadId
+        };
     }
 
-    public async Task UploadPart(S3UploadSession session, Stream stream, bool isLastPart)
+    public async Task<PartETag> UploadPart(S3UploadSession session, Stream stream, bool isLastPart)
     {
-        _ = await EnsureSeekableStream<object?>(stream, async stream =>
+        return await EnsureSeekableStream(stream, async stream =>
         {
             var uploadRequest = new UploadPartRequest
             {
                 BucketName = _bucketName,
                 Key = session.StorageKey,
                 UploadId = session.UploadId,
-                PartNumber = session.GetNextPartNumber(),
+                PartNumber = session.PartNumber,
                 PartSize = stream.Length,
                 InputStream = stream,
                 ChecksumAlgorithm = ChecksumAlgorithm.SHA256,
-                IsLastPart = true
+                IsLastPart = isLastPart
             };
 
             var uploadResponse = await _s3Client.UploadPartAsync(uploadRequest);
 
-            session.ETags.Add(new PartETag(uploadResponse, true));
-
-            return null;
+            return new PartETag(uploadResponse, true);
         });
     }
 
@@ -123,7 +127,10 @@ public class S3Storage
             BucketName = _bucketName,
             Key = session.StorageKey,
             UploadId = session.UploadId,
-            PartETags = session.ETags
+            PartETags = session.ETags.Select(x => new PartETag(x.PartNumber, x.ETag)
+            {
+                ChecksumSHA256 = x.Checksum
+            }).ToList()
         };
 
         await _s3Client.CompleteMultipartUploadAsync(completeRequest);

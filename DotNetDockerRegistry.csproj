@@ -8,6 +8,7 @@
 
   <ItemGroup>
     <PackageReference Include="AWSSDK.S3" Version="4.0.6.10" />
+    <PackageReference Include="DistributedLock.FileSystem" Version="1.0.3" />
   </ItemGroup>
 
 </Project>

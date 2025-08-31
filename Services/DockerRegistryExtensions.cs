@@ -7,6 +7,7 @@ public static class DockerRegistryExtensions
 {
     public static IServiceCollection AddDockerRegistry(this IServiceCollection services)
     {
+        services.AddSingleton<SessionStorage>();
         services.AddSingleton<DockerRegistry>();
         services.AddSingleton<DockerRegistryApi>();
 

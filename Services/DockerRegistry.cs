@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -12,6 +11,7 @@ using DotNetDockerRegistry.Core;
 using DotNetDockerRegistry.Options;
 using DotNetDockerRegistry.Stores;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace DotNetDockerRegistry;
@@ -20,10 +20,14 @@ public sealed class DockerRegistry
 {
     private static readonly Regex _repositoryNameRegex = new Regex(@"^[a-z0-9]+(?:[\/._-][a-z0-9]+)*$");
 
-    private readonly ConcurrentDictionary<string, S3UploadSession> _uploadSessions = new();
+    private readonly ILogger<DockerRegistry> _logger;
+    private readonly SessionStorage _sessionStorage;
 
-    public DockerRegistry(IOptions<DockerRegistryOptions> options)
+    public DockerRegistry(ILogger<DockerRegistry> logger, IOptions<DockerRegistryOptions> options, SessionStorage sessionStorage)
     {
+        _logger = logger;
+        _sessionStorage = sessionStorage;
+
         Store = new S3Storage(options.Value.Storage.S3);
     }
 
@@ -119,7 +123,7 @@ public sealed class DockerRegistry
 
         var session = await Store.BeginUpload(uuid, $"uploads/{uuid}");
 
-        _uploadSessions.TryAdd(uuid, session);
+        await _sessionStorage.SaveSessionAsync(session);
 
         context.Response.Headers.Location = $"/v2/{name}/blobs/uploads/{uuid}";
         context.Response.Headers.Range = "0-0";
@@ -131,12 +135,36 @@ public sealed class DockerRegistry
 
     public async Task<IResult> Upload(HttpContext context, string name, string uuid)
     {
-        if (!_uploadSessions.TryGetValue(uuid, out var session))
-            return Results.NotFound();
+        var session = await _sessionStorage.UpdateSessionAsync(uuid, session =>
+        {
+            session.PartNumber++;
+        });
+
+        if (session is null)
+        {
+            return Results.NotFound(new DockerApiErrors(new DockerApiError()
+            {
+                Code = DockerErrorCodes.BLOB_UPLOAD_UNKNOWN,
+                Message = "Invalid blob upload",
+                Detail = "The provided blob upload UUID is unknown."
+            }));
+        }
 
         //var start = context.Request.Headers.ContentRange.FirstOrDefault()?.Split("-")[0] ?? "0";
 
-        await Store.UploadPart(session, context.Request.Body, false);
+        _logger.LogDebug($"Upload Range: {context.Request.Headers.ContentRange}");
+
+        var etag = await Store.UploadPart(session, context.Request.Body, false);
+
+        await _sessionStorage.UpdateSessionAsync(uuid, session =>
+        {
+            session.ETags.Add(new S3UploadSessionETag()
+            {
+                PartNumber = etag.PartNumber!.Value,
+                ETag = etag.ETag,
+                Checksum = etag.ChecksumSHA256
+            });
+        });
 
         context.Response.Headers.Append("docker-upload-uuid", uuid);
         context.Response.Headers.Location = $"/v2/{name}/blobs/uploads/{uuid}";
@@ -148,8 +176,20 @@ public sealed class DockerRegistry
 
     public async Task<IResult> FinishUpload(HttpContext context, string name, string uuid, Digest digest)
     {
-        if (!_uploadSessions.TryGetValue(uuid, out var session))
-            return Results.NotFound();
+        var session = await _sessionStorage.UpdateSessionAsync(uuid, session =>
+        {
+            session.PartNumber++;
+        });
+
+        if (session is null)
+        {
+            return Results.NotFound(new DockerApiErrors(new DockerApiError()
+            {
+                Code = DockerErrorCodes.BLOB_UPLOAD_UNKNOWN,
+                Message = "Invalid blob upload",
+                Detail = "The provided blob upload UUID is unknown."
+            }));
+        }
 
         var contentLength = context.Request.ContentLength;
 
@@ -157,7 +197,17 @@ public sealed class DockerRegistry
         {
             var rangeHeader = context.Request.Headers.ContentRange;
 
-            await Store.UploadPart(session, context.Request.Body, true);
+            var etag = await Store.UploadPart(session, context.Request.Body, true);
+
+            session = await _sessionStorage.UpdateSessionAsync(uuid, session =>
+            {
+                session.ETags.Add(new S3UploadSessionETag()
+                {
+                    PartNumber = etag.PartNumber!.Value,
+                    ETag = etag.ETag,
+                    Checksum = etag.ChecksumSHA256
+                });
+            });
         }
 
         await Store.FinishUpload(session);
@@ -172,7 +222,12 @@ public sealed class DockerRegistry
 
     public async Task<IResult> AbortUpload(HttpContext context, string uuid)
     {
-        if (!_uploadSessions.TryGetValue(uuid, out var session))
+        var session = await _sessionStorage.UpdateSessionAsync(uuid, session =>
+        {
+            session.PartNumber++;
+        });
+
+        if (session is null)
         {
             return Results.NotFound(new DockerApiErrors(new DockerApiError()
             {
@@ -184,7 +239,7 @@ public sealed class DockerRegistry
 
         await Store.AbortUpload(session);
 
-        _uploadSessions.TryRemove(session.Uuid, out _);
+        _sessionStorage.DeleteSessionAsync(session.Uuid);
 
         context.Response.Headers.ContentLength = 0;
 
